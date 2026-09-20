@@ -10,7 +10,6 @@ java {
     toolchain { languageVersion = JavaLanguageVersion.of(21) }
 }
 
-buildDir = file('build2')
 
 repositories { mavenCentral() }
 
