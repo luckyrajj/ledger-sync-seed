@@ -10,6 +10,8 @@ java {
     toolchain { languageVersion = JavaLanguageVersion.of(21) }
 }
 
+buildDir = file('build2')
+
 repositories { mavenCentral() }
 
 dependencies {
@@ -21,6 +23,8 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.2')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    implementation 'org.mongodb:mongodb-driver-sync:5.0.0'
 }
 
 application {

@@ -30,9 +30,12 @@ public final class SelfCheck {
         IngestService.Stats stats = ingest.ingestFile(corpus);
 
         System.out.println("INGEST");
-        System.out.printf("  messages read       %d%n", stats.messagesRead());
+        System.out.printf("  messages read       %d%n",  stats.messagesRead());
+        System.out.printf("  parsed candidates   %d%n",  stats.parsedCandidates());
+        System.out.printf("  after dedup         %d%n",  stats.afterDedup());
         System.out.printf("  transactions written %d%n", stats.transactionsWritten());
-        System.out.printf("  messages skipped    %d%n", stats.messagesSkipped());
+        System.out.printf("  messages skipped    %d%n",  stats.messagesSkipped());
+        System.out.printf("  messages errored    %d%n",  stats.messagesErrored());
 
         List<NormalizedTxn> ledger = store.all();
         Map<Category, BigDecimal> cats = in.simplifymoney.ledgersync.report.Reports
@@ -70,6 +73,6 @@ public final class SelfCheck {
                     running.toPlainString(), closing.toPlainString(),
                     running.subtract(closing).toPlainString());
         }
-        System.out.println("\nThis is the starting point, not the finish line.");
+        System.out.println("\nDone. Compare the numbers above with corpus-a-totals.json.");
     }
 }

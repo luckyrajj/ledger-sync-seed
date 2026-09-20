@@ -7,9 +7,7 @@ import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 
 /**
- * Amount extraction.
- *
- * This suite is green. It has been green since it was written.
+ * Amount extraction tests.
  */
 class AmountsTest {
 
@@ -44,5 +42,15 @@ class AmountsTest {
     @Test
     void ignoresAMessageWithNoAmountAtAll() {
         assertEquals(null, Amounts.first("Your Swiggy order is on the way!"));
+    }
+
+    @Test
+    void readsWholeRupeeAmountWithoutDecimalAndDoesNotPickBalance_INC_2026_09_11() {
+        // INC-2026-09-11 regression test: "Rs.5" without decimal point must not match "Rs.92,213.10"
+        assertEquals(new BigDecimal("5.00"),
+                Amounts.first("Rs.5 debited from a/c **4821 on 04-07-26 at 07:19 to UPI/WATER CAN. Avl Bal: Rs.92,213.10."));
+
+        assertEquals(new BigDecimal("18000.00"),
+                Amounts.first("Dear Customer, Acct XX9075 is credited with INR 18000 on 01/07/2026 21:14. Info: NEFT INWARD SELF. Avl Bal Rs.49,882.25"));
     }
 }
