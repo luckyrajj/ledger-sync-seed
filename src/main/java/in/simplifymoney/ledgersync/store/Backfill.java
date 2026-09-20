@@ -18,10 +18,10 @@ import java.util.Map;
  */
 public final class Backfill {
 
-    private final SqlLedgerStore source;
+    private final LedgerStore source;
     private final DocumentStore target;
 
-    public Backfill(SqlLedgerStore source, DocumentStore target) {
+    public Backfill(LedgerStore source, DocumentStore target) {
         this.source = source;
         this.target = target;
     }

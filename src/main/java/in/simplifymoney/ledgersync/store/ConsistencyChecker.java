@@ -20,10 +20,10 @@ import java.util.TreeSet;
  */
 public final class ConsistencyChecker {
 
-    private final SqlLedgerStore sql;
+    private final LedgerStore sql;
     private final DocumentStore documents;
 
-    public ConsistencyChecker(SqlLedgerStore sql, DocumentStore documents) {
+    public ConsistencyChecker(LedgerStore sql, DocumentStore documents) {
         this.sql = sql;
         this.documents = documents;
     }

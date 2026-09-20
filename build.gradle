@@ -25,6 +25,7 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     implementation 'org.mongodb:mongodb-driver-sync:5.0.0'
+    testImplementation 'de.flapdoodle.embed:de.flapdoodle.embed.mongo:3.5.3'
 }
 
 application {

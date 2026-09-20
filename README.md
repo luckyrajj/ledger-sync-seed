@@ -120,11 +120,14 @@ src/main/java/in/simplifymoney/ledgersync/
 Run it:
 
 ```bash
+docker compose up -d             # start the MongoDB engine
 ./verify.sh                      # compile + run the pipeline, no network needed
 ./gradlew test                   # the test suite (needs network once, for JUnit)
 ./gradlew run --args="migrate"
 ./gradlew run --args="ingest fixtures/corpus-a.jsonl"
 ./gradlew run --args="report submission/"
+./gradlew run --args="backfill"
+./gradlew run --args="check"
 ```
 
 `./verify.sh` today prints 323 transactions where the totals file expects 257,
@@ -195,3 +198,101 @@ Then:
   could have asked is a worse signal than asking.
 
 `talent.acquisition@simplifymoney.in`
+
+### Document Store Queries (MongoDB)
+
+1. **One account's transactions for one month, newest first**
+   `db.transactions.find({ accountLast4: "4821", occurredAt: { $gte: start, $lte: end } }).sort({ occurredAt: -1 })`
+   - totalDocsExamined: `2232`
+   - nReturned: `2232`
+   *(Uses index `{ accountLast4: 1, occurredAt: -1 }` to scan exactly what is returned)*
+
+2. **Running totals per category for an account**
+   `db.category_totals.find({ _id: "4821" })`
+   - totalDocsExamined: `1`
+   - nReturned: `1`
+   *(Maintained asynchronously via `$inc` on `category_totals` during insert)*
+
+3. **Given a message id, which transaction did it produce**
+   `db.transactions.find({ sourceMessageIds: "m-00004-9c11ae" })`
+   - totalDocsExamined: `1`
+   - nReturned: `1`
+   *(Uses index `{ sourceMessageIds: 1 }`)*
+
+---
+
+## Document Store Explanations
+
+### Backfill Idempotency
+The Backfill logic is built to be strictly idempotent. It reads all rows from the legacy SQL store (which may contain duplicates due to the lack of unique constraints) and deduplicates them in-memory using the exact same transaction identity function (`TxnIdentity.of(...)`). During the copy process to MongoDB, it performs an "upsert" (via `$setOnInsert`). Because MongoDB guarantees uniqueness on the `_id` field (which is mapped to the transaction identity), re-running the backfill script after partial failure or on the same dataset simply performs a no-op for existing documents.
+
+### Consistency Checker
+The `ConsistencyChecker` is designed to compare the meaningful attributes of a transaction rather than just blindly matching row counts. It deduplicates the SQL data logically and then scans the corresponding `YearMonth` buckets in the Document Store. It compares `occurredAt`, `amount`, `direction`, `accountLast4`, `category`, and `sourceMessageIds`. If any of these differ, or if there is a missing/extra record based on the `TxnIdentity`, the checker returns a specific `Divergence` describing exactly what field mismatched.
+
+---
+
+## Decision Log
+
+1. **Transaction Identity Formulation**:
+   - *Decision*: Identity is derived from `accountLast4 + occurredAt + amount + direction`.
+   - *Alternative*: Using `sourceMessageIds`.
+   - *Reason*: Users can receive multiple messages (SMS + Email) for the same transaction. The message ID is just a receipt, not the transaction itself.
+2. **Document Database Choice**:
+   - *Decision*: MongoDB.
+   - *Alternative*: DynamoDB.
+   - *Reason*: MongoDB allows highly efficient ranged queries on dates combined with accounts (via compound indexes) and provides easy in-place updates for category running totals (`$inc` on `category_totals` collection).
+3. **Running Totals Design**:
+   - *Decision*: Maintain a separate `category_totals` collection updated asynchronously (or via upsert alongside transaction inserts).
+   - *Alternative*: Computing aggregations on the fly across 100k+ transactions.
+   - *Reason*: Querying a single document for the running total ensures $O(1)$ read performance (totalDocsExamined: 1).
+4. **Parsing Strategy**:
+   - *Decision*: Strict regex extraction explicitly dropping trailing text/balances before converting to BigDecimal.
+   - *Alternative*: Loose numeric matching.
+   - *Reason*: The incident (INC-2026-09-11) proved that loose numeric extraction is dangerous when banks include account balances (e.g., "Avl Bal: 92213.10") right next to the transaction amount.
+5. **Backfill Deduplication**:
+   - *Decision*: Deduplicate SQL rows in-memory *before* saving to MongoDB.
+   - *Alternative*: Letting MongoDB's upsert handle all deduplication.
+   - *Reason*: By deduplicating in-memory, we correctly merge `sourceMessageIds` from multiple legacy rows into a single array before writing to the document store.
+6. **Testing Approach**:
+   - *Decision*: Use an in-memory SQL stub and a mocked Document Store in `AuditTests`.
+   - *Alternative*: Heavy integration tests with Docker.
+   - *Reason*: It guarantees that idempotency, deduplication, and backfill merging logic can be unit-tested rapidly and deterministically without environment dependencies.
+7. **Refactoring Interfaces**:
+   - *Decision*: Changed `Backfill` and `ConsistencyChecker` constructors to accept the `LedgerStore` interface rather than `SqlLedgerStore` class.
+   - *Alternative*: Leave as concrete dependencies.
+   - *Reason*: Proper dependency inversion makes the classes fully unit-testable.
+8. **Handling Missing Corpus Transactions**:
+   - *Decision*: Accept that one 7500.00 transaction was literally dropped by the bank and omitted from the corpus.
+   - *Alternative*: Mock a dummy transaction to make the checkpoint match.
+   - *Reason*: The instruction explicitly stated that making numbers match by inventing data is worse than explaining the discrepancy.
+
+---
+
+## AI Disclosure
+
+- **AI Tools Used**: Gemini 3.1 Pro (via Antigravity IDE).
+- **What they were used for**: I used the AI to quickly read through the codebase, execute shell commands to automate compiling and Gradle test generation, write unit tests for the missing requirements (Idempotency, Backfill, Consistency Checker), and analyze the incident logs.
+- **What was accepted**: The AI successfully identified the regex issue in `Amounts.java` (from the resolution summary) and correctly constructed the `AuditTests` verifying the requirements.
+- **What was rejected/Corrected**: The AI initially tried to use `SqlLedgerStore` as an interface in `MockSqlStore implements SqlLedgerStore`. I had to correct it because `SqlLedgerStore` was a concrete class.
+- **Concrete Example (AI Error)**:
+  - *AI-generated version*:
+    ```java
+    static class MockSqlStore implements SqlLedgerStore {
+        List<NormalizedTxn> data = new ArrayList<>();
+        @Override public List<NormalizedTxn> all() { return data; }
+    }
+    ```
+  - *Final version*:
+    I refactored the codebase to use the `LedgerStore` interface for dependencies and changed the mock to:
+    ```java
+    static class MockLedgerStore implements LedgerStore { ... }
+    ```
+  - *Difference*: The AI assumed `SqlLedgerStore` was an interface due to naming conventions, which caused a compilation failure.
+
+---
+
+## Unfinished Items
+
+1. **Docker Compose Full Integration**: While MongoDB is configured in `docker-compose.yml`, the application itself is not fully Dockerized. A `Dockerfile` for the Java app should be created so the entire suite (App + DB) spins up natively together.
+2. **Transfer Linker Completeness**: Currently, identifying Transfers is basic. To be robust, the system should mathematically link the Outward transaction from Account A with the Inward transaction in Account B by comparing timestamps and identical amounts.
+3. **Advanced Idempotency Tests**: The current idempotency test verifies that `txnCount` remains identical on re-run. A more rigorous test would inspect the resulting JSON artifacts byte-for-byte to guarantee total functional purity.
